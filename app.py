@@ -2,85 +2,90 @@ from flask import *
 import os
 from werkzeug.utils import secure_filename
 import label_image
-
 import image_fuzzy_clustering as fem
-import os
-import secrets
+import numpy as np
 from PIL import Image
-from flask import url_for, current_app
+from flask import current_app
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.applications import imagenet_utils
+
+app = Flask(__name__)
+model = None
+
+# Upload folder
+UPLOAD_FOLDER = os.path.join(app.root_path, 'static', 'img')
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 
+# -------------------- FUNCTIONS --------------------
 
 def load_image(image):
     text = label_image.main(image)
     return text
 
 
-
-
 def prepare_image(image, target):
-    # if the image mode is not RGB, convert it
     if image.mode != "RGB":
         image = image.convert("RGB")
 
-    # resize the input image and preprocess it
     image = image.resize(target)
     image = img_to_array(image)
     image = np.expand_dims(image, axis=0)
     image = imagenet_utils.preprocess_input(image)
 
-    # return the processed image
     return image
 
 
+def save_img(img, filename):
+    folder_path = os.path.join(current_app.root_path, 'static', 'images')
+
+    # create folder if not exists
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+
+    picture_path = os.path.join(folder_path, filename)
+
+    i = Image.open(img)
+    i.save(picture_path)
+
+    return picture_path
 
 
-app = Flask(__name__)
-model = None
-
-UPLOAD_FOLDER = os.path.join(app.root_path ,'static','img')
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
+# -------------------- ROUTES --------------------
 
 @app.route('/')
 @app.route('/first')
 def first():
     return render_template('first.html')
 
- 
-  
-    
+
 @app.route('/login')
 def login():
     return render_template('login.html')
+
+
 @app.route('/chart')
 def chart():
     return render_template('chart.html')
+
 
 @app.route('/upload')
 def upload():
     return render_template('index1.html')
 
+
 @app.route('/success', methods=['POST'])
 def success():
     if request.method == 'POST':
-        i=request.form.get('cluster')
+        i = request.form.get('cluster')
         f = request.files['file']
-        fname, f_ext = os.path.splitext(f.filename)
-        original_pic_path=save_img(f, f.filename)
-        destname = 'em_img.jpg'
-        fem.plot_cluster_img(original_pic_path,i)
+
+        original_pic_path = save_img(f, f.filename)
+
+        # clustering
+        fem.plot_cluster_img(original_pic_path, i)
+
     return render_template('success.html')
-
-def save_img(img, filename):
-    picture_path = os.path.join(current_app.root_path, 'static/images', filename)
-    # output_size = (300, 300)
-    i = Image.open(img)
-    # i.thumbnail(output_size)
-    i.save(picture_path)
-
-    return picture_path
-
 
 
 @app.route('/index')
@@ -91,28 +96,41 @@ def index():
 @app.route('/predict', methods=['GET', 'POST'])
 def upload1():
     if request.method == 'POST':
-        # Get the file from post request
+
         f = request.files['file']
-        file_path = secure_filename(f.filename)
+
+        # secure path
+        file_path = os.path.join("static", secure_filename(f.filename))
         f.save(file_path)
-        # Make prediction
+
+        # prediction
         result = load_image(file_path)
         result = result.title()
-        d = {"1":" → Stage1 -The disease is only in the ducts and lobules of the breast. It has not spread to the surrounding tissue. It is also called noninvasive cancer (Tis, N0, M0). ",
-	'2':" → Stage2 -The disease is invasive. Cancer cells are now in normal breast tissue. A tumor may not be found in the breast, but cancer cells have spread to at least 1 to 3 lymph nodes. Or Stage IIA may show a 2 to 5 cm tumor in the breast with or without spread to the axillary lymph nodes.",
-        '3':" → Stage3 -A tumor may not be found in the breast, but cancer cells have spread to at least 1 to 3 lymph nodes. Or Stage IIA may show a 2 to 5 cm tumor in the breast with or without spread to the axillary lymph nodes.",
-        '4':" → Stage4 - The tumor is in the breast and any size or no tumor is found in the breast but is in the lymph nodes. The disease has spread to more than 4 lymph nodes in the breast or axilla. It has not spread to other parts of the body.",
-        "0":" → There is no Chance of Breast Cancer, No Risk You are Healthy"}
-        result = result+d[result]
-        #result2 = result+d[result]
-        #result = [result]
-        #result3 = d[result]        
+
+        d = {
+            "1": " → Stage1 - The disease is only in ducts and lobules (noninvasive).",
+            "2": " → Stage2 - Cancer has spread to nearby tissue or lymph nodes.",
+            "3": " → Stage3 - Cancer spread to multiple lymph nodes.",
+            "4": " → Stage4 - Cancer spread beyond breast to other body parts.",
+            "0": " → No Breast Cancer detected. You are healthy."
+        }
+
+        if result in d:
+            result = result + d[result]
+
         print(result)
-        #print(result3)
-        os.remove(file_path)
+
+        # remove uploaded file
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
         return result
-        #return result3
+
     return None
 
+
+# -------------------- MAIN --------------------
+
 if __name__ == '__main__':
-    app.run()
+    PORT = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=PORT)
